@@ -1,0 +1,601 @@
+"""
+Grafos — 7 Estados del Sureste de México
+==========================================
+Funciones incluidas:
+  a) Recorrer los 7 estados SIN repetir  (camino Hamiltoniano óptimo)
+  b) Recorrer los 7 estados repitiendo AL MENOS uno  (Dijkstra puente)
+  c) Costo total del recorrido mostrado para a) y b)  (paso a paso)
+  d) Dibuja el grafo con sus costos, nodos, aristas y animación de ruta
+  e) Muestra estados, relaciones y costos de traslado en tabla
+"""
+
+import tkinter as tk
+import math
+import itertools
+import heapq
+
+# ══════════════════════════════════════════════════════════
+#  1. DATOS DEL GRAFO
+# ══════════════════════════════════════════════════════════
+
+ESTADOS = [
+    "Yucatán",
+    "Campeche",
+    "Quintana Roo",
+    "Tabasco",
+    "Chiapas",
+    "Veracruz",
+    "Oaxaca",
+]
+
+# Conexiones directas con costos de traslado en km
+# Grafo denso para garantizar múltiples rutas posibles
+CONEXIONES = {
+    ("Yucatán",      "Campeche"):      200,
+    ("Yucatán",      "Quintana Roo"):  320,
+    ("Yucatán",      "Tabasco"):       490,
+    ("Campeche",     "Quintana Roo"):  380,
+    ("Campeche",     "Tabasco"):       430,
+    ("Campeche",     "Chiapas"):       520,
+    ("Campeche",     "Oaxaca"):        710,
+    ("Quintana Roo", "Chiapas"):       680,
+    ("Tabasco",      "Chiapas"):       230,
+    ("Tabasco",      "Veracruz"):      350,
+    ("Tabasco",      "Oaxaca"):        560,
+    ("Chiapas",      "Oaxaca"):        440,
+    ("Chiapas",      "Veracruz"):      510,
+    ("Veracruz",     "Oaxaca"):        290,
+}
+
+# Grafo bidireccional (lista de adyacencia)
+grafo: dict = {e: {} for e in ESTADOS}
+for (a, b), c in CONEXIONES.items():
+    grafo[a][b] = c
+    grafo[b][a] = c
+
+
+# ══════════════════════════════════════════════════════════
+#  2. ALGORITMOS
+# ══════════════════════════════════════════════════════════
+
+def costo_ruta(ruta: list):
+    """Costo de una ruta. None si algún tramo directo no existe."""
+    total = 0
+    for i in range(len(ruta) - 1):
+        a, b = ruta[i], ruta[i + 1]
+        if b not in grafo[a]:
+            return None
+        total += grafo[a][b]
+    return total
+
+
+def dijkstra(origen: str, destino: str):
+    """
+    Camino más corto entre dos estados (algoritmo de Dijkstra).
+    Retorna (lista_nodos, costo_total).
+    """
+    dist = {e: math.inf for e in ESTADOS}
+    prev = {e: None for e in ESTADOS}
+    dist[origen] = 0
+    heap = [(0, origen)]
+
+    while heap:
+        d, u = heapq.heappop(heap)
+        if d > dist[u]:
+            continue
+        for v, w in grafo[u].items():
+            nd = dist[u] + w
+            if nd < dist[v]:
+                dist[v] = nd
+                prev[v] = u
+                heapq.heappush(heap, (nd, v))
+
+    path, n = [], destino
+    while n is not None:
+        path.append(n)
+        n = prev[n]
+    path.reverse()
+
+    if dist[destino] == math.inf:
+        return [], math.inf
+    return path, int(dist[destino])
+
+
+# ── INCISO A: Hamiltoniano sin repetir ─────────────────
+
+def hamiltoniano_sin_repetir():
+    """
+    Visita los 7 estados EXACTAMENTE UNA VEZ, sin repetir ninguno.
+    Fuerza bruta sobre todas las permutaciones.
+    Prioriza rutas con aristas directas; si no existen, usa Dijkstra
+    como puente virtual y registra los nodos intermedios también.
+    """
+    mejor_ruta, mejor_costo = None, math.inf
+
+    # Intento 1: solo aristas directas (hamiltoniano puro)
+    for perm in itertools.permutations(ESTADOS):
+        c = costo_ruta(list(perm))
+        if c is not None and c < mejor_costo:
+            mejor_costo = c
+            mejor_ruta = list(perm)
+
+    # Intento 2: si no hay ninguno puro, usar Dijkstra entre cada par
+    if mejor_ruta is None:
+        for perm in itertools.permutations(ESTADOS):
+            ruta_total = [perm[0]]
+            costo_total = 0
+            valida = True
+            for i in range(len(perm) - 1):
+                sub, d = dijkstra(perm[i], perm[i + 1])
+                if d == math.inf:
+                    valida = False
+                    break
+                ruta_total.extend(sub[1:])
+                costo_total += d
+            if valida and costo_total < mejor_costo:
+                mejor_costo = costo_total
+                mejor_ruta = ruta_total
+
+    return mejor_ruta, mejor_costo
+
+
+# ── INCISO B: Recorrido con repetición ─────────────────
+
+def recorrido_con_repeticion():
+    """
+    Recorre los 7 estados garantizando que AL MENOS UN estado
+    aparezca MÁS DE UNA VEZ en la ruta.
+
+    Estrategia Greedy-Dijkstra:
+    - Desde cada posible nodo inicio, elige el estado no visitado
+      más cercano usando Dijkstra como puente.
+    - Dijkstra introduce nodos intermedios => genera repeticiones.
+    - Al final, si por algún inicio no hubo repetición natural,
+      se fuerza un paso extra al vecino más económico.
+    - Se devuelve la ruta de menor costo total entre todos los inicios.
+    """
+    mejor_ruta, mejor_costo = None, math.inf
+
+    for inicio in ESTADOS:
+        ruta = [inicio]
+        visitados = {inicio}
+        costo_total = 0
+        actual = inicio
+
+        while len(visitados) < len(ESTADOS):
+            pendientes = [e for e in ESTADOS if e not in visitados]
+            mejor_d = math.inf
+            mejor_sub = None
+
+            for pend in pendientes:
+                sub, d = dijkstra(actual, pend)
+                if d < mejor_d:
+                    mejor_d = d
+                    mejor_sub = sub
+
+            if mejor_sub is None:
+                break
+
+            for nodo in mejor_sub[1:]:
+                ruta.append(nodo)
+                costo_total += grafo[ruta[-2]][ruta[-1]]
+
+            visitados.add(mejor_sub[-1])
+            actual = mejor_sub[-1]
+
+        # Garantizar AL MENOS una repetición
+        tiene_repeticion = any(ruta.count(e) > 1 for e in ESTADOS)
+        if not tiene_repeticion:
+            # Agregar el vecino directo más barato desde el nodo actual
+            vecinos = sorted(grafo[actual].items(), key=lambda x: x[1])
+            if vecinos:
+                v_nodo, v_costo = vecinos[0]
+                ruta.append(v_nodo)
+                costo_total += v_costo
+
+        if costo_total < mejor_costo:
+            mejor_costo = costo_total
+            mejor_ruta = ruta[:]
+
+    return mejor_ruta, mejor_costo
+
+
+# ══════════════════════════════════════════════════════════
+#  3. POSICIONES EN EL CANVAS  (proporcionales 0.0–1.0)
+# ══════════════════════════════════════════════════════════
+
+POS = {
+    "Yucatán":      (0.71, 0.16),
+    "Quintana Roo": (0.90, 0.27),
+    "Campeche":     (0.59, 0.33),
+    "Tabasco":      (0.37, 0.40),
+    "Chiapas":      (0.47, 0.63),
+    "Veracruz":     (0.16, 0.43),
+    "Oaxaca":       (0.21, 0.71),
+}
+
+# ══════════════════════════════════════════════════════════
+#  4. PALETA
+# ══════════════════════════════════════════════════════════
+
+C = {
+    "bg":         "#0b0f17",
+    "panel":      "#111827",
+    "panel2":     "#0f1a2b",
+    "border":     "#1e3050",
+    "accent":     "#38bdf8",
+    "green":      "#34d399",
+    "orange":     "#fb923c",
+    "purple":     "#a855f7",
+    "text":       "#e2e8f0",
+    "text_dim":   "#4b6080",
+    "node":       "#1d4ed8",
+    "node_ruta":  "#fb923c",
+    "node_rep":   "#a855f7",
+    "edge":       "#1a3050",
+    "edge_ruta":  "#fb923c",
+}
+
+
+# ══════════════════════════════════════════════════════════
+#  5. INTERFAZ GRÁFICA
+# ══════════════════════════════════════════════════════════
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Grafos · 7 Estados del Sureste de México")
+        self.configure(bg=C["bg"])
+        self.geometry("1300x780")
+        self.minsize(1020, 660)
+
+        self._ruta: list = []
+        self._anim_id = None
+
+        self._build_ui()
+        self.after(120, self._draw_graph)
+
+    # ─── construcción UI ─────────────────────────────────
+
+    def _build_ui(self):
+        # ENCABEZADO
+        hdr = tk.Frame(self, bg=C["bg"])
+        hdr.pack(fill="x", padx=22, pady=(14, 0))
+        tk.Label(hdr, text="◈ GRAFOS",
+                 font=("Courier", 22, "bold"),
+                 bg=C["bg"], fg=C["accent"]).pack(side="left")
+        tk.Label(hdr, text="  Sureste de México · 7 estados · costos en km",
+                 font=("Courier", 11),
+                 bg=C["bg"], fg=C["text_dim"]).pack(side="left", pady=4)
+        tk.Frame(self, bg=C["border"], height=1).pack(
+            fill="x", padx=22, pady=8)
+
+        # CUERPO
+        body = tk.Frame(self, bg=C["bg"])
+        body.pack(fill="both", expand=True, padx=22, pady=(0, 6))
+
+        # Panel izquierdo de controles
+        left = tk.Frame(body, bg=C["panel"],
+                        highlightthickness=1,
+                        highlightbackground=C["border"])
+        left.pack(side="left", fill="y", padx=(0, 14))
+        left.pack_propagate(False)
+        left.config(width=340)
+        self._build_panel(left)
+
+        # Canvas del grafo
+        right = tk.Frame(body, bg=C["bg"])
+        right.pack(side="left", fill="both", expand=True)
+        self.canvas = tk.Canvas(right, bg=C["bg"], highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", lambda _: self._draw_graph())
+
+        # Barra de estado inferior
+        self.sv = tk.StringVar(value="Listo — elige una operación.")
+        tk.Label(self, textvariable=self.sv,
+                 font=("Courier", 9), bg=C["bg"], fg=C["text_dim"],
+                 anchor="w").pack(fill="x", padx=22, pady=(0, 6))
+
+    def _build_panel(self, p):
+        def sep(parent, titulo, color=C["accent"]):
+            f = tk.Frame(parent, bg=C["panel"])
+            f.pack(fill="x", padx=12, pady=(14, 0))
+            tk.Label(f, text=titulo, font=("Courier", 10, "bold"),
+                     bg=C["panel"], fg=color).pack(anchor="w")
+            tk.Frame(f, bg=C["border"], height=1).pack(
+                fill="x", pady=(3, 6))
+            return f
+
+        # ① ESTADOS Y RELACIONES
+        s1 = sep(p, "① ESTADOS Y RELACIONES")
+        self.t_rel = tk.Text(
+            s1, height=9, bg=C["panel2"], fg=C["text"],
+            font=("Courier", 8), relief="flat",
+            insertbackground=C["text"], state="disabled",
+            selectbackground=C["accent"], bd=0, padx=5, pady=4)
+        self.t_rel.pack(fill="x")
+        self._llenar_relaciones()
+
+        # ② RECORRIDOS
+        s2 = sep(p, "② RECORRIDOS", C["green"])
+
+        def boton(padre, txt, cmd, bg_col):
+            b = tk.Button(padre, text=txt, command=cmd,
+                          bg=bg_col, fg="#ffffff", relief="flat",
+                          font=("Courier", 10, "bold"),
+                          activebackground=C["accent"],
+                          activeforeground="#ffffff",
+                          cursor="hand2", pady=8, padx=4)
+            b.pack(fill="x", pady=3)
+
+        boton(s2, "▶  A) Sin repetir  (Hamiltoniano)",
+              self._run_hamilton, C["node"])
+        boton(s2, "▶  B) Con repetición  (Dijkstra puente)",
+              self._run_repeticion, "#6d28d9")
+        boton(s2, "↺  Limpiar ruta",
+              self._clear, C["text_dim"])
+
+        # ③ RESULTADO Y COSTOS
+        s3 = sep(p, "③ RESULTADO Y COSTOS", C["orange"])
+        self.t_res = tk.Text(
+            s3, height=14, bg=C["panel2"], fg=C["green"],
+            font=("Courier", 8), relief="flat",
+            insertbackground=C["text"], state="disabled",
+            selectbackground=C["accent"], bd=0, padx=5, pady=4)
+        self.t_res.pack(fill="x")
+
+        # LEYENDA
+        s4 = sep(p, "LEYENDA", C["text_dim"])
+        items = [
+            ("●", C["node"],      "Nodo sin visitar"),
+            ("●", C["node_ruta"], "En ruta activa"),
+            ("●", C["node_rep"],  "Nodo REPETIDO (inciso b)"),
+            ("─", C["edge_ruta"], "Arista de ruta"),
+            ("─", C["edge"],      "Conexión disponible"),
+        ]
+        for sym, col, desc in items:
+            row = tk.Frame(s4, bg=C["panel"])
+            row.pack(anchor="w")
+            tk.Label(row, text=f"  {sym} ",
+                     font=("Courier", 13, "bold"),
+                     bg=C["panel"], fg=col).pack(side="left")
+            tk.Label(row, text=desc, font=("Courier", 8),
+                     bg=C["panel"], fg=C["text_dim"]).pack(side="left")
+
+    # ─── tabla de relaciones ─────────────────────────────
+
+    def _llenar_relaciones(self):
+        self.t_rel.config(state="normal")
+        self.t_rel.delete("1.0", "end")
+        header = f"  {'ORIGEN':<15} {'DESTINO':<15} COSTO\n"
+        self.t_rel.insert("end", header)
+        self.t_rel.insert("end", "  " + "─" * 38 + "\n")
+        for (a, b), c in sorted(CONEXIONES.items(), key=lambda x: x[1]):
+            self.t_rel.insert(
+                "end",
+                f"  {a:<15} {b:<15} {c:>5} km\n")
+        self.t_rel.insert(
+            "end", f"\n  Total aristas: {len(CONEXIONES)}\n")
+        self.t_rel.config(state="disabled")
+
+    # ─── dibujo del grafo ────────────────────────────────
+
+    def _draw_graph(self, ruta: list = None, hasta: int = -1):
+        self.canvas.delete("all")
+        W = self.canvas.winfo_width()
+        H = self.canvas.winfo_height()
+        if W < 40 or H < 40:
+            return
+
+        ruta = ruta or []
+
+        def px(e):
+            x, y = POS[e]
+            return int(x * W), int(y * H)
+
+        # Aristas activas (hasta el paso 'hasta')
+        lim = hasta if hasta >= 0 else len(ruta) - 1
+        aristas_activas = set()
+        for i in range(min(lim, len(ruta) - 1)):
+            aristas_activas.add((ruta[i], ruta[i + 1]))
+            aristas_activas.add((ruta[i + 1], ruta[i]))
+
+        # ── Dibujar todas las aristas ──
+        for (a, b), costo in CONEXIONES.items():
+            x1, y1 = px(a)
+            x2, y2 = px(b)
+            activa = (a, b) in aristas_activas or (b, a) in aristas_activas
+            color = C["edge_ruta"] if activa else C["edge"]
+            ancho = 3 if activa else 1
+            self.canvas.create_line(
+                x1, y1, x2, y2, fill=color, width=ancho)
+            # Etiqueta de costo en el punto medio, desplazada
+            mx, my = (x1 + x2) // 2, (y1 + y2) // 2
+            dx, dy = x2 - x1, y2 - y1
+            lng = max(1, math.hypot(dx, dy))
+            ox, oy = -dy / lng * 12, dx / lng * 12
+            self.canvas.create_text(
+                int(mx + ox), int(my + oy),
+                text=str(costo), font=("Courier", 7),
+                fill=C["edge_ruta"] if activa else C["text_dim"])
+
+        # ── Flechas de dirección sobre aristas activas ──
+        for i in range(min(lim, len(ruta) - 1)):
+            x1, y1 = px(ruta[i])
+            x2, y2 = px(ruta[i + 1])
+            t = 0.6
+            ax = x1 + (x2 - x1) * t
+            ay = y1 + (y2 - y1) * t
+            ang = math.atan2(y2 - y1, x2 - x1)
+            ds = 9
+            self.canvas.create_line(
+                ax - ds * math.cos(ang - 0.45),
+                ay - ds * math.sin(ang - 0.45),
+                ax, ay,
+                ax - ds * math.cos(ang + 0.45),
+                ay - ds * math.sin(ang + 0.45),
+                fill=C["edge_ruta"], width=2,
+                arrow=tk.LAST, arrowshape=(10, 12, 5))
+
+        # ── Dibujar nodos ──
+        R = max(22, min(W, H) // 22)
+        nodos_en_ruta = set(ruta[:lim + 1]) if ruta else set()
+        repetidos = {e for e in ESTADOS if ruta.count(e) > 1}
+
+        for estado in ESTADOS:
+            x, y = px(estado)
+            en_ruta = estado in nodos_en_ruta
+            repetido = estado in repetidos
+
+            if repetido and en_ruta:
+                fill_c   = C["node_rep"]
+                outline_c = "#ffffff"
+                borde = 3
+            elif en_ruta:
+                fill_c   = C["node_ruta"]
+                outline_c = "#ffffff"
+                borde = 3
+            else:
+                fill_c   = C["node"]
+                outline_c = C["accent"]
+                borde = 2
+
+            # Sombra
+            self.canvas.create_oval(
+                x - R + 3, y - R + 3, x + R + 3, y + R + 3,
+                fill="#000000", outline="", stipple="gray25")
+            # Nodo
+            self.canvas.create_oval(
+                x - R, y - R, x + R, y + R,
+                fill=fill_c, outline=outline_c, width=borde)
+            # Número(s) de paso dentro del nodo (esquina superior derecha)
+            if ruta:
+                pasos = [str(i + 1) for i, e in
+                         enumerate(ruta[:lim + 1]) if e == estado]
+                if pasos:
+                    self.canvas.create_text(
+                        x + R - 3, y - R + 4,
+                        text=",".join(pasos),
+                        font=("Courier", 7, "bold"),
+                        fill="#ffffff", anchor="ne")
+            # Nombre corto dentro del nodo
+            short = estado[:7] + "." if len(estado) > 7 else estado
+            self.canvas.create_text(
+                x, y, text=short,
+                font=("Courier", 8, "bold"), fill="#ffffff")
+            # Nombre completo debajo
+            self.canvas.create_text(
+                x, y + R + 10, text=estado,
+                font=("Courier", 7), fill=C["text_dim"])
+
+        # Título en el canvas
+        self.canvas.create_text(
+            10, 10, anchor="nw",
+            text="Grafo — Sureste de México  (aristas con costos en km)",
+            font=("Courier", 9), fill=C["text_dim"])
+
+    # ─── animación ──────────────────────────────────────
+
+    def _animar(self, ruta: list, paso: int = 0):
+        if self._anim_id:
+            self.after_cancel(self._anim_id)
+        self._draw_graph(ruta, hasta=paso)
+        if paso < len(ruta) - 1:
+            self._anim_id = self.after(
+                400, lambda: self._animar(ruta, paso + 1))
+        else:
+            self._anim_id = None
+            self.sv.set("✔ Animación completa.")
+
+    # ─── inciso A ───────────────────────────────────────
+
+    def _run_hamilton(self):
+        if self._anim_id:
+            self.after_cancel(self._anim_id)
+        self.sv.set("⏳ Calculando inciso A (sin repetir)…")
+        self.update()
+        ruta, costo = hamiltoniano_sin_repetir()
+        self._ruta = ruta
+        self._mostrar_resultado(
+            "A) SIN REPETIR — Hamiltoniano", ruta, costo, "a")
+        self._animar(ruta)
+
+    # ─── inciso B ───────────────────────────────────────
+
+    def _run_repeticion(self):
+        if self._anim_id:
+            self.after_cancel(self._anim_id)
+        self.sv.set("⏳ Calculando inciso B (con repetición)…")
+        self.update()
+        ruta, costo = recorrido_con_repeticion()
+        self._ruta = ruta
+        self._mostrar_resultado(
+            "B) CON REPETICIÓN — Dijkstra", ruta, costo, "b")
+        self._animar(ruta)
+
+    # ─── panel de resultado con costos ──────────────────
+
+    def _mostrar_resultado(self, titulo, ruta, costo, inciso):
+        self.t_res.config(state="normal")
+        self.t_res.delete("1.0", "end")
+
+        self.t_res.insert("end", f"╔═ {titulo}\n\n")
+
+        # Tabla paso a paso
+        self.t_res.insert(
+            "end", f"  {'#':>3}  {'ESTADO':<16} {'PARCIAL':>8}  TOTAL\n")
+        self.t_res.insert("end", "  " + "─" * 40 + "\n")
+
+        acum = 0
+        for i, estado in enumerate(ruta):
+            if i == 0:
+                self.t_res.insert(
+                    "end", f"  {1:>3}  {estado:<16} {'inicio':>8}  0 km\n")
+            else:
+                tramo = grafo[ruta[i - 1]][ruta[i]]
+                acum += tramo
+                rep = "★" if ruta.count(estado) > 1 else " "
+                self.t_res.insert(
+                    "end",
+                    f"  {i+1:>3}{rep} {estado:<16} +{tramo:>5}km  {acum:,} km\n")
+
+        self.t_res.insert("end", "\n  " + "═" * 40 + "\n")
+        self.t_res.insert("end", f"  COSTO TOTAL:   {costo:,} km\n")
+        self.t_res.insert("end", f"  TOTAL PASOS:   {len(ruta)}\n")
+
+        repetidos = [e for e in ESTADOS if ruta.count(e) > 1]
+        self.t_res.insert(
+            "end",
+            f"  TODOS VISITADOS: {'✔ Sí' if set(ruta) == set(ESTADOS) else '✘ No'}\n")
+
+        if inciso == "b":
+            self.t_res.insert(
+                "end",
+                f"  AL MENOS 1 REP: {'✔ Sí  ★' if repetidos else '✘ No'}\n")
+            if repetidos:
+                self.t_res.insert(
+                    "end", f"  Repetidos: {', '.join(repetidos)}\n")
+
+        self.t_res.config(state="disabled")
+        self.sv.set(
+            f"Inciso {inciso.upper()} → costo: {costo:,} km  "
+            f"| pasos: {len(ruta)}  | repetidos: {len(repetidos)}")
+
+    # ─── limpiar ─────────────────────────────────────────
+
+    def _clear(self):
+        if self._anim_id:
+            self.after_cancel(self._anim_id)
+            self._anim_id = None
+        self._ruta = []
+        self._draw_graph()
+        self.t_res.config(state="normal")
+        self.t_res.delete("1.0", "end")
+        self.t_res.config(state="disabled")
+        self.sv.set("Ruta limpiada — elige una operación.")
+
+
+# ══════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
