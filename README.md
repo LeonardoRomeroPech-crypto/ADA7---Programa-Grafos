@@ -1,0 +1,7 @@
+¿Cómo funciona el programa?
+El programa modela 7 estados del sureste de México como un grafo, donde cada estado es un nodo y cada conexión entre estados es una arista con un costo en kilómetros.
+Estructura del grafo: Se definen 14 conexiones bidireccionales (por ejemplo, Yucatán ↔ Campeche = 200 km). Internamente se guarda como un diccionario donde cada estado conoce a sus vecinos y el costo para llegar a ellos.
+Inciso A — Sin repetir (Hamiltoniano): Prueba todas las permutaciones posibles de los 7 estados (5,040 combinaciones) y se queda con la que tenga menor costo total usando solo aristas directas. Si ninguna permutación tiene todas las conexiones directas, usa Dijkstra como puente entre pares.
+Inciso B — Con repetición (Dijkstra): Parte desde cada estado como origen y en cada paso elige el estado pendiente más cercano usando el algoritmo de Dijkstra. Como Dijkstra puede pasar por nodos intermedios ya visitados para llegar al destino, eso genera las repeticiones naturalmente. Si aún así no hubiera repetición, fuerza un paso extra al vecino más barato.
+Costo total: En ambos incisos se suma tramo por tramo y se muestra una tabla con el costo parcial de cada paso y el acumulado final.
+La interfaz tiene tres secciones: la tabla de relaciones y costos, los botones para ejecutar cada inciso, y el panel de resultados. El canvas dibuja el grafo en tiempo real y anima la ruta paso a paso, coloreando en naranja las aristas recorridas y en morado los nodos que se repiten.
